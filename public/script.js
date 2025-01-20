@@ -94,16 +94,73 @@ class BookLibrary {
         modalCover.onerror = () => modalCover.src = this.defaultCover;
         modalHighlightCount.textContent = `${book.highlights.length} highlight${book.highlights.length !== 1 ? 's' : ''}`;
         
-        highlightsContainer.innerHTML = book.highlights
-            .map(highlight => `
-                <div class="highlight-item">
+         highlightsContainer.innerHTML = book.highlights
+        .map(highlight => `
+            <div class="highlight-item" data-highlight-id="${highlight.id}">
+                <div class="highlight-content">
                     <blockquote>${highlight.text}</blockquote>
                     <small class="highlight-metadata">${highlight.metadata}</small>
                 </div>
-            `)
-            .join('');
+                <span class="exclude-highlight-icon" 
+                      onclick="event.stopPropagation(); window.bookLibrary.excludeHighlight('${book.title}', '${highlight.id}', '${highlight.text}')">
+                    ×
+                </span>
+            </div>
+        `)
+        .join('');
+        
+    this.highlightsModal.style.display = 'block';
+    }
+
+    async excludeHighlight(bookTitle, highlightId, highlightText) {
+        try {
+            await fetch('/api/exclude-highlight', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    bookTitle,
+                    highlightText
+                })
+            });
+
+            // Remove highlight from UI
+            const highlightElement = document.querySelector(`[data-highlight-id="${highlightId}"]`);
+            if (highlightElement) {
+                highlightElement.style.opacity = '0'; // Fade out
+                setTimeout(() => {
+                    highlightElement.remove();
+                    // Update highlight count in the modal
+                    const countElement = document.getElementById('modal-highlight-count');
+                    const currentCount = parseInt(countElement.textContent);
+                    countElement.textContent = `${currentCount - 1} highlight${currentCount - 2 === 0 ? '' : 's'}`;
+                }, 300);
+            }
+
+            // Refresh book list to update highlight counts
+            this.init();
+        } catch (error) {
+            console.error('Error excluding highlight:', error);
+        }
+    }
+
+    // Add method to view excluded highlights
+    async showExcludedHighlights() {
+        try {
+            const response = await fetch('/api/excluded-highlights');
+            const highlights = await response.json();
             
-        this.highlightsModal.style.display = 'block';
+            const container = document.getElementById('excludedHighlightsList');
+            container.innerHTML = highlights.map(h => `
+                <div class="excluded-highlight">
+                    <h4>${h.book_title}</h4>
+                    <blockquote>${h.highlight_text}</blockquote>
+                </div>
+            `).join('');
+        } catch (error) {
+            console.error('Error loading excluded highlights:', error);
+        }
     }
 
     async loadExcludedBooks() {
@@ -156,6 +213,9 @@ class BookLibrary {
         }
     }
 }
+
+// Make instance available globally for button click handlers
+window.bookLibrary = new BookLibrary();
 
 // Initialize when the page loads
 window.addEventListener('load', () => {

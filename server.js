@@ -75,9 +75,29 @@ async function readExcludeList() {
     }
 }
 
+async function readExcludedClippings() {
+    try {
+        const content = await fs.readFile(path.join(__dirname, 'data', 'excluded-clippings.csv'), 'utf8');
+        const records = parse(content, {
+            columns: true,
+            skip_empty_lines: true,
+            trim: true
+        });
+        
+        // Create a Set of "book_title|highlight_text" for faster lookup
+        return new Set(records.map(record => 
+            `${record.book_title.toLowerCase()}|${record.highlight_text.toLowerCase()}`
+        ));
+    } catch (error) {
+        console.error('Error reading excluded clippings:', error);
+        return new Set();
+    }
+}
+
 async function parseClippings() {
     try {
         const excludeList = await readExcludeList();
+        const excludedClippings = await readExcludedClippings();
         
         const content = await fs.readFile(path.join(__dirname, 'data', 'My Clippings.txt'), 'utf8');
         const entries = content.split('==========');
@@ -93,10 +113,18 @@ async function parseClippings() {
             if (match) {
                 const title = match[1].trim();
                 const author = match[2].trim();
+                const highlightText = lines[3].trim();
                 
-                const key = `${title.toLowerCase()}|${author.toLowerCase()}`;
-                if (excludeList.has(key)) {
-                    continue; // Skip excluded book
+                // Check if book is excluded
+                const bookKey = `${title.toLowerCase()}|${author.toLowerCase()}`;
+                if (excludeList.has(bookKey)) {
+                    continue;
+                }
+
+                // Check if highlight is excluded
+                const highlightKey = `${title.toLowerCase()}|${highlightText.toLowerCase()}`;
+                if (excludedClippings.has(highlightKey)) {
+                    continue;
                 }
 
                 const metadata = lines[1].trim()
@@ -106,19 +134,15 @@ async function parseClippings() {
 
                 if (!books.has(title)) {
                     const amazonId = await extractAmazonId(metadata);
-                    let coverUrl = null;
+                    const bookId = Buffer.from(`${title}${author}`).toString('base64').replace(/[/+=]/g, '_');
 
-                    // Try Amazon cover first
-                    if (amazonId) {
-                        coverUrl = await getAmazonCoverUrl(amazonId);
-                    }
-
-                    // If no Amazon cover, try OpenLibrary
+                    let coverUrl = await getAmazonCoverUrl(amazonId);
                     if (!coverUrl) {
                         coverUrl = await getOpenLibraryCover(title, author);
                     }
 
                     books.set(title, {
+                        id: bookId,
                         title,
                         author,
                         amazonId,
@@ -129,7 +153,8 @@ async function parseClippings() {
 
                 const book = books.get(title);
                 book.highlights.push({
-                    text: lines[3].trim(),
+                    id: Buffer.from(highlightText).toString('base64').replace(/[/+=]/g, '_'),
+                    text: highlightText,
                     metadata: metadata
                 });
             }
@@ -178,6 +203,38 @@ app.post('/api/exclude-book', async (req, res) => {
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: 'Error updating exclude list' });
+    }
+});
+
+// Add new endpoint to exclude individual highlights
+app.post('/api/exclude-highlight', async (req, res) => {
+    try {
+        const { bookTitle, highlightText } = req.body;
+        const newLine = `\n"${bookTitle}","${highlightText}"`;
+        
+        await fs.appendFile(
+            path.join(__dirname, 'data', 'excluded-clippings.csv'),
+            newLine
+        );
+        
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: 'Error excluding highlight' });
+    }
+});
+
+// Add endpoint to get excluded highlights
+app.get('/api/excluded-highlights', async (req, res) => {
+    try {
+        const content = await fs.readFile(path.join(__dirname, 'data', 'excluded-clippings.csv'), 'utf8');
+        const records = parse(content, {
+            columns: true,
+            skip_empty_lines: true,
+            trim: true
+        });
+        res.json(records);
+    } catch (error) {
+        res.status(500).json({ error: 'Error reading excluded highlights' });
     }
 });
 
