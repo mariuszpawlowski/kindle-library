@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kindle Library</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>My Kindle Library</h1>
+        <div class="manage-exclusions">
+            <button id="showExclusions">Manage Exclusions</button>
+        </div>
+        <div class="book-grid" id="bookGrid"></div>
+    </div>
+
+    <!-- Main Modal for Highlights -->
+    <div id="highlightsModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <div class="modal-header">
+                <img id="modalCover" class="modal-cover" src="" alt="">
+                <div class="modal-book-info">
+                    <h2 id="modal-title"></h2>
+                    <p id="modal-author"></p>
+                    <p id="modal-highlight-count"></p>
+                </div>
+            </div>
+            <div id="highlights-container"></div>
+        </div>
+    </div>
+
+    <!-- Exclusions Modal -->
+    <div id="exclusionsModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Excluded Books</h2>
+            <div id="excludedBooksList"></div>
+            <div class="add-exclusion">
+                <h3>Add Book to Exclude List</h3>
+                <input type="text" id="excludeTitle" placeholder="Book Title">
+                <input type="text" id="excludeAuthor" placeholder="Author">
+                <input type="text" id="excludeReason" placeholder="Reason">
+                <button id="addExclusion">Add to Exclude List</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
