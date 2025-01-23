@@ -271,6 +271,46 @@ button:hover {
 
 /* Add loading state styles */
 .highlight-item.removing {
-    opacity: 0.5;
+  opacity: 0;
+    transform: translateX(20px);
     pointer-events: none;
+}
+
+.highlight-count {
+    transition: opacity 0.3s ease;
+}
+
+.highlight-count.updating {
+    opacity: 0.5;
+}
+
+.excluded-book {
+    background: #f8d7da;
+    border-left: 3px solid #dc3545;
+    padding: 15px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+
+.excluded-book h4 {
+    margin: 0 0 10px 0;
+    color: #333;
+}
+
+.excluded-book p {
+    margin: 5px 0;
+    color: #666;
+}
+
+.add-exclusion {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #ddd;
+}
+
+.add-exclusion input {
+    display: block;
+    margin: 10px 0;
+    padding: 8px;
+    width: 100%;
 }

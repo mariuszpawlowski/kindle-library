@@ -8,6 +8,21 @@ class BookLibrary {
         this.setupModals();
         this.setupExclusionsUI();
         this.init();
+        this.debouncedRefresh = this.debounce(this.refreshBookList.bind(this), 2000);
+    }
+
+
+    // Add debounce utility
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
     }
 
     setupModals() {
@@ -31,6 +46,25 @@ class BookLibrary {
         };
     }
 
+    async loadExcludedBooks() {
+        try {
+            const response = await fetch('/api/excluded-books');
+            const books = await response.json();
+            
+            const list = document.getElementById('excludedBooksList');
+            if (list) {
+                list.innerHTML = books.map(book => `
+                    <div class="excluded-book">
+                        <h4>${book.title}</h4>
+                        <p>Author: ${book.author}</p>
+                    </div>
+                `).join('');
+            }
+        } catch (error) {
+            console.error('Error loading excluded books:', error);
+        }
+    }
+
     setupExclusionsUI() {
         const showExclusionsBtn = document.getElementById('showExclusions');
         const addBtn = document.getElementById('addExclusion');
@@ -48,7 +82,7 @@ class BookLibrary {
             this.bookGrid.innerHTML = '<div class="loading"></div>';
             const response = await fetch('/api/books');
             const books = await response.json();
-            this.currentBooks = books; // Store the books
+            this.currentBooks = books;
             console.log(`Loaded ${books.length} books`);
             this.displayBooks(books);
         } catch (error) {
@@ -62,7 +96,16 @@ class BookLibrary {
             const response = await fetch('/api/books');
             const books = await response.json();
             this.currentBooks = books;
-            this.displayBooks(books);
+            books.forEach(book => {
+                const bookElement = document.querySelector(`[data-book-id="${book.id}"]`);
+                if (bookElement) {
+                    const countElement = bookElement.querySelector('.highlight-count');
+                    if (countElement) {
+                        countElement.textContent = 
+                            `${book.highlights.length} highlight${book.highlights.length !== 1 ? 's' : ''}`;
+                    }
+                }
+            });
         } catch (error) {
             console.error('Error refreshing books:', error);
         }
@@ -117,39 +160,22 @@ class BookLibrary {
         book.highlights.forEach(highlight => {
             const highlightDiv = document.createElement('div');
             highlightDiv.className = 'highlight-item';
+            highlightDiv.dataset.highlightId = highlight.id;
+            
             highlightDiv.innerHTML = `
-                <blockquote>${highlight.text}</blockquote>
-                <small class="highlight-metadata">${highlight.metadata}</small>
+                <div class="highlight-content">
+                    <blockquote>${highlight.text}</blockquote>
+                    <small class="highlight-metadata">${highlight.metadata}</small>
+                </div>
                 <span class="exclude-highlight-icon">×</span>
             `;
 
             const excludeIcon = highlightDiv.querySelector('.exclude-highlight-icon');
             excludeIcon.onclick = async (e) => {
                 e.stopPropagation();
-                const success = await this.excludeHighlight(book, highlight);
-                if (success) {
-                    // Animate removal
-                    highlightDiv.style.opacity = '0';
-                    highlightDiv.style.transform = 'translateX(20px)';
-                    setTimeout(() => {
-                        highlightDiv.remove();
-                        
-                        // Update modal count
-                        const currentCount = document.querySelectorAll('.highlight-item').length;
-                        modalHighlightCount.textContent = 
-                            `${currentCount} highlight${currentCount !== 1 ? 's' : ''}`;
-
-                        // Update main page immediately
-                        const bookElement = this.bookGrid.querySelector(`[data-book-id="${book.id}"]`);
-                        if (bookElement) {
-                            const countElement = bookElement.querySelector('.highlight-count');
-                            if (countElement) {
-                                countElement.textContent = 
-                                    `${currentCount} highlight${currentCount !== 1 ? 's' : ''}`;
-                            }
-                        }
-                    }, 300);
-                }
+                await this.excludeHighlight(book, highlight);
+                // Schedule a background refresh
+                this.debouncedRefresh();
             };
 
             highlightsContainer.appendChild(highlightDiv);
@@ -158,43 +184,94 @@ class BookLibrary {
         this.highlightsModal.style.display = 'block';
     }
 
-    async excludeHighlight(book, highlight) {
+    // Add refresh method
+    async refreshBookList() {
         try {
-            console.log('Excluding highlight:', { book: book.title, text: highlight.text });
-            
-            const response = await fetch('/api/exclude-highlight', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    bookTitle: book.title,
-                    highlightText: highlight.text
-                })
+            const response = await fetch('/api/books');
+            const books = await response.json();
+            this.currentBooks = books;
+            // Only update the counts, don't rebuild the entire grid
+            books.forEach(book => {
+                const bookElement = document.querySelector(`[data-book-id="${book.id}"]`);
+                if (bookElement) {
+                    const countElement = bookElement.querySelector('.highlight-count');
+                    if (countElement) {
+                        countElement.textContent = 
+                            `${book.highlights.length} highlight${book.highlights.length !== 1 ? 's' : ''}`;
+                    }
+                }
             });
-
-            const result = await response.json();
-            console.log('Server response:', result);
-
-            if (!response.ok) {
-                throw new Error(result.error || 'Failed to exclude highlight');
-            }
-
-            // Update UI for both modal and main page
-            await this.refreshBookList();
-            
-            // Update the book object in currentBooks
-            const updatedBook = this.currentBooks.find(b => b.title === book.title);
-            if (updatedBook) {
-                updatedBook.highlights = updatedBook.highlights.filter(h => h.text !== highlight.text);
-            }
-
-            return true;
         } catch (error) {
-            console.error('Error excluding highlight:', error);
-            return false;
+            console.error('Error refreshing books:', error);
         }
     }
+
+async excludeHighlight(book, highlight) {
+    try {
+        // Start animation immediately for better UX
+        const highlightElement = document.querySelector(`[data-highlight-id="${highlight.id}"]`);
+        if (highlightElement) {
+            highlightElement.style.opacity = '0';
+            highlightElement.style.transform = 'translateX(20px)';
+        }
+
+        // Send request to server
+        const response = await fetch('/api/exclude-highlight', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                bookTitle: book.title,
+                highlightText: highlight.text
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to exclude highlight');
+        }
+
+        // Update UI without full refresh
+        setTimeout(() => {
+            if (highlightElement) {
+                highlightElement.remove();
+
+                // Update highlight count in modal
+                const modalHighlightCount = document.getElementById('modal-highlight-count');
+                const currentModalCount = document.querySelectorAll('.highlight-item').length;
+                modalHighlightCount.textContent = 
+                    `${currentModalCount} highlight${currentModalCount !== 1 ? 's' : ''}`;
+
+                // Update count in main grid
+                const bookElement = document.querySelector(`[data-book-id="${book.id}"]`);
+                if (bookElement) {
+                    const countElement = bookElement.querySelector('.highlight-count');
+                    if (countElement) {
+                        countElement.textContent = 
+                            `${currentModalCount} highlight${currentModalCount !== 1 ? 's' : ''}`;
+                    }
+                }
+            }
+        }, 300);
+
+        // Update internal data without refresh
+        const bookIndex = this.currentBooks.findIndex(b => b.id === book.id);
+        if (bookIndex !== -1) {
+            this.currentBooks[bookIndex].highlights = 
+                this.currentBooks[bookIndex].highlights.filter(h => h.id !== highlight.id);
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Error excluding highlight:', error);
+        // Revert animation if failed
+        if (highlightElement) {
+            highlightElement.style.opacity = '1';
+            highlightElement.style.transform = 'none';
+        }
+        return false;
+    }
+}
 
 
     async setDefaultCover(title, author) {
@@ -211,9 +288,9 @@ class BookLibrary {
         }
     }
 
-    async addBookToExcludeList() {
-        const title = document.getElementById('excludeTitle').value;
-        const author = document.getElementById('excludeAuthor').value;
+ async addBookToExcludeList() {
+        const title = document.getElementById('excludeTitle')?.value;
+        const author = document.getElementById('excludeAuthor')?.value;
 
         if (!title || !author) {
             alert('Please enter both title and author');
@@ -221,7 +298,7 @@ class BookLibrary {
         }
 
         try {
-            await fetch('/api/exclude-book', {
+            const response = await fetch('/api/exclude-book', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -229,15 +306,26 @@ class BookLibrary {
                 body: JSON.stringify({ title, author })
             });
 
+            if (!response.ok) {
+                throw new Error('Failed to exclude book');
+            }
+
             // Clear inputs
-            document.getElementById('excludeTitle').value = '';
-            document.getElementById('excludeAuthor').value = '';
+            if (document.getElementById('excludeTitle')) {
+                document.getElementById('excludeTitle').value = '';
+            }
+            if (document.getElementById('excludeAuthor')) {
+                document.getElementById('excludeAuthor').value = '';
+            }
 
             // Refresh lists
-            this.loadExcludedBooks();
-            this.init();
+            await this.loadExcludedBooks();
+            await this.init();
+
+            alert('Book excluded successfully');
         } catch (error) {
             console.error('Error adding book to exclude list:', error);
+            alert('Failed to exclude book');
         }
     }
 }

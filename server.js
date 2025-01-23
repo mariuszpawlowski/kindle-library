@@ -365,6 +365,59 @@ app.post('/api/exclude-highlight', async (req, res) => {
     }
 });
 
+// Add this endpoint for excluding books
+app.post('/api/exclude-book', async (req, res) => {
+    try {
+        const { title, author } = req.body;
+        
+        if (!title || !author) {
+            return res.status(400).json({ error: 'Missing title or author' });
+        }
+
+        const filePath = path.join(DATA_DIR, 'exclude.csv');
+        
+        // Ensure file exists with headers
+        if (!fsSync.existsSync(filePath)) {
+            await fs.writeFile(filePath, 'title,author\n');
+        }
+
+        // Prepare CSV line
+        const escapedTitle = title.replace(/"/g, '""').trim();
+        const escapedAuthor = author.replace(/"/g, '""').trim();
+        const newLine = `"${escapedTitle}","${escapedAuthor}"\n`;
+        
+        await fs.appendFile(filePath, newLine);
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error excluding book:', error);
+        res.status(500).json({ error: 'Error excluding book' });
+    }
+});
+
+// Add endpoint to get excluded books
+app.get('/api/excluded-books', async (req, res) => {
+    try {
+        const filePath = path.join(DATA_DIR, 'exclude.csv');
+        
+        if (!fsSync.existsSync(filePath)) {
+            return res.json([]);
+        }
+
+        const content = await fs.readFile(filePath, 'utf8');
+        const records = parse(content, {
+            columns: true,
+            skip_empty_lines: true,
+            trim: true
+        });
+        
+        res.json(records);
+    } catch (error) {
+        console.error('Error getting excluded books:', error);
+        res.status(500).json({ error: 'Error getting excluded books' });
+    }
+});
+
 // Initialize server
 (async () => {
     try {
