@@ -4,6 +4,7 @@ class BookLibrary {
         this.highlightsModal = document.getElementById('highlightsModal');
         this.exclusionsModal = document.getElementById('exclusionsModal');
         this.defaultCover = '/images/default-cover.jpg';
+        this.currentBooks = []; // Add this to store current books
         this.setupModals();
         this.setupExclusionsUI();
         this.init();
@@ -47,10 +48,23 @@ class BookLibrary {
             this.bookGrid.innerHTML = '<div class="loading"></div>';
             const response = await fetch('/api/books');
             const books = await response.json();
+            this.currentBooks = books; // Store the books
+            console.log(`Loaded ${books.length} books`);
             this.displayBooks(books);
         } catch (error) {
             console.error('Error:', error);
             this.bookGrid.innerHTML = '<div class="error">Error loading books</div>';
+        }
+    }
+
+    async refreshBookList() {
+        try {
+            const response = await fetch('/api/books');
+            const books = await response.json();
+            this.currentBooks = books;
+            this.displayBooks(books);
+        } catch (error) {
+            console.error('Error refreshing books:', error);
         }
     }
 
@@ -65,12 +79,16 @@ class BookLibrary {
     createBookElement(book) {
         const bookElement = document.createElement('div');
         bookElement.className = 'book-item';
+        bookElement.setAttribute('data-book-id', book.id);
+        
+        const useDefaultCover = book.useDefaultCover || !book.cover_image;
+        const coverUrl = useDefaultCover ? this.defaultCover : book.cover_image;
         
         bookElement.innerHTML = `
-            <img src="${book.cover_image || this.defaultCover}" 
+            <img src="${coverUrl}" 
                  alt="${book.title}" 
-                 class="book-cover"
-                 onerror="this.src='${this.defaultCover}'">
+                 class="book-cover${useDefaultCover ? ' default-cover' : ' cached'}"
+                 onerror="this.onerror=null; this.src='${this.defaultCover}'; this.classList.add('default-cover');">
             <h3 class="book-title">${book.title}</h3>
             <p class="book-author">${book.author}</p>
             <p class="highlight-count">${book.highlights.length} highlight${book.highlights.length !== 1 ? 's' : ''}</p>
@@ -94,97 +112,108 @@ class BookLibrary {
         modalCover.onerror = () => modalCover.src = this.defaultCover;
         modalHighlightCount.textContent = `${book.highlights.length} highlight${book.highlights.length !== 1 ? 's' : ''}`;
         
-         highlightsContainer.innerHTML = book.highlights
-        .map(highlight => `
-            <div class="highlight-item" data-highlight-id="${highlight.id}">
-                <div class="highlight-content">
-                    <blockquote>${highlight.text}</blockquote>
-                    <small class="highlight-metadata">${highlight.metadata}</small>
-                </div>
-                <span class="exclude-highlight-icon" 
-                      onclick="event.stopPropagation(); window.bookLibrary.excludeHighlight('${book.title}', '${highlight.id}', '${highlight.text}')">
-                    ×
-                </span>
-            </div>
-        `)
-        .join('');
+        highlightsContainer.innerHTML = '';
+
+        book.highlights.forEach(highlight => {
+            const highlightDiv = document.createElement('div');
+            highlightDiv.className = 'highlight-item';
+            highlightDiv.innerHTML = `
+                <blockquote>${highlight.text}</blockquote>
+                <small class="highlight-metadata">${highlight.metadata}</small>
+                <span class="exclude-highlight-icon">×</span>
+            `;
+
+            const excludeIcon = highlightDiv.querySelector('.exclude-highlight-icon');
+            excludeIcon.onclick = async (e) => {
+                e.stopPropagation();
+                const success = await this.excludeHighlight(book, highlight);
+                if (success) {
+                    // Animate removal
+                    highlightDiv.style.opacity = '0';
+                    highlightDiv.style.transform = 'translateX(20px)';
+                    setTimeout(() => {
+                        highlightDiv.remove();
+                        
+                        // Update modal count
+                        const currentCount = document.querySelectorAll('.highlight-item').length;
+                        modalHighlightCount.textContent = 
+                            `${currentCount} highlight${currentCount !== 1 ? 's' : ''}`;
+
+                        // Update main page immediately
+                        const bookElement = this.bookGrid.querySelector(`[data-book-id="${book.id}"]`);
+                        if (bookElement) {
+                            const countElement = bookElement.querySelector('.highlight-count');
+                            if (countElement) {
+                                countElement.textContent = 
+                                    `${currentCount} highlight${currentCount !== 1 ? 's' : ''}`;
+                            }
+                        }
+                    }, 300);
+                }
+            };
+
+            highlightsContainer.appendChild(highlightDiv);
+        });
         
-    this.highlightsModal.style.display = 'block';
+        this.highlightsModal.style.display = 'block';
     }
 
-    async excludeHighlight(bookTitle, highlightId, highlightText) {
+    async excludeHighlight(book, highlight) {
         try {
-            await fetch('/api/exclude-highlight', {
+            console.log('Excluding highlight:', { book: book.title, text: highlight.text });
+            
+            const response = await fetch('/api/exclude-highlight', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    bookTitle,
-                    highlightText
+                    bookTitle: book.title,
+                    highlightText: highlight.text
                 })
             });
 
-            // Remove highlight from UI
-            const highlightElement = document.querySelector(`[data-highlight-id="${highlightId}"]`);
-            if (highlightElement) {
-                highlightElement.style.opacity = '0'; // Fade out
-                setTimeout(() => {
-                    highlightElement.remove();
-                    // Update highlight count in the modal
-                    const countElement = document.getElementById('modal-highlight-count');
-                    const currentCount = parseInt(countElement.textContent);
-                    countElement.textContent = `${currentCount - 1} highlight${currentCount - 2 === 0 ? '' : 's'}`;
-                }, 300);
+            const result = await response.json();
+            console.log('Server response:', result);
+
+            if (!response.ok) {
+                throw new Error(result.error || 'Failed to exclude highlight');
             }
 
-            // Refresh book list to update highlight counts
-            this.init();
+            // Update UI for both modal and main page
+            await this.refreshBookList();
+            
+            // Update the book object in currentBooks
+            const updatedBook = this.currentBooks.find(b => b.title === book.title);
+            if (updatedBook) {
+                updatedBook.highlights = updatedBook.highlights.filter(h => h.text !== highlight.text);
+            }
+
+            return true;
         } catch (error) {
             console.error('Error excluding highlight:', error);
+            return false;
         }
     }
 
-    // Add method to view excluded highlights
-    async showExcludedHighlights() {
-        try {
-            const response = await fetch('/api/excluded-highlights');
-            const highlights = await response.json();
-            
-            const container = document.getElementById('excludedHighlightsList');
-            container.innerHTML = highlights.map(h => `
-                <div class="excluded-highlight">
-                    <h4>${h.book_title}</h4>
-                    <blockquote>${h.highlight_text}</blockquote>
-                </div>
-            `).join('');
-        } catch (error) {
-            console.error('Error loading excluded highlights:', error);
-        }
-    }
 
-    async loadExcludedBooks() {
+    async setDefaultCover(title, author) {
         try {
-            const response = await fetch('/api/excluded-books');
-            const books = await response.json();
-            
-            const list = document.getElementById('excludedBooksList');
-            list.innerHTML = books.map(book => `
-                <div class="excluded-book">
-                    <h4>${book.title}</h4>
-                    <p>Author: ${book.author}</p>
-                    <p>Reason: ${book.reason}</p>
-                </div>
-            `).join('');
+            await fetch('/api/set-default-cover', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ title, author })
+            });
         } catch (error) {
-            console.error('Error loading excluded books:', error);
+            console.error('Error setting default cover:', error);
         }
     }
 
     async addBookToExcludeList() {
         const title = document.getElementById('excludeTitle').value;
         const author = document.getElementById('excludeAuthor').value;
-        const reason = document.getElementById('excludeReason').value;
 
         if (!title || !author) {
             alert('Please enter both title and author');
@@ -197,27 +226,23 @@ class BookLibrary {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ title, author, reason })
+                body: JSON.stringify({ title, author })
             });
-
-            // Refresh lists
-            this.loadExcludedBooks();
-            this.init(); // Reload main book list
 
             // Clear inputs
             document.getElementById('excludeTitle').value = '';
             document.getElementById('excludeAuthor').value = '';
-            document.getElementById('excludeReason').value = '';
+
+            // Refresh lists
+            this.loadExcludedBooks();
+            this.init();
         } catch (error) {
             console.error('Error adding book to exclude list:', error);
         }
     }
 }
 
-// Make instance available globally for button click handlers
-window.bookLibrary = new BookLibrary();
-
 // Initialize when the page loads
 window.addEventListener('load', () => {
-    new BookLibrary();
+    window.bookLibrary = new BookLibrary();
 });
